@@ -27,6 +27,9 @@ button{font-family:var(--sans)}
 .brand small{font-weight:500;color:var(--muted);font-size:12px}
 .ticker{margin-left:auto;font-family:var(--mono);font-size:12px;color:var(--sea);display:flex;align-items:center;gap:7px}
 .ticker b{color:var(--mint)}
+.tk-name{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+#usage{white-space:nowrap;margin-left:8px}
+.brand{white-space:nowrap;flex-shrink:0}
 .pulse{width:7px;height:7px;border-radius:50%;background:var(--mint);animation:blink 1.8s infinite}
 @keyframes blink{0%,100%{opacity:1}50%{opacity:.25}}
 
@@ -178,7 +181,7 @@ button{font-family:var(--sans)}
 .msugg span{font-size:12px;color:var(--sea);background:#0c3039;border:1px solid var(--line);border-radius:16px;padding:6px 11px;cursor:pointer}
 .msugg span:hover{border-color:var(--mint);color:var(--mint)}
 
-@media(max-width:640px){.flowgrid{grid-template-columns:repeat(2,1fr)}.ws{grid-template-columns:1fr}.steps .lbl span{display:none}.verdict{flex-direction:column;align-items:flex-start}.jactions{margin-left:0;width:100%}}
+@media(max-width:640px){.flowgrid{grid-template-columns:repeat(2,1fr)}.ws{grid-template-columns:1fr}.steps .lbl span{display:none}.verdict{flex-direction:column;align-items:flex-start}.jactions{margin-left:0;width:100%}.top .wrap{gap:8px}.brand{font-size:16px}.ticker{font-size:11px}.tk-name{display:none}}
 @media(prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
 :focus-visible{outline:2px solid var(--mint);outline-offset:2px}
 </style>
@@ -188,7 +191,7 @@ button{font-family:var(--sans)}
 
 <div class="top"><div class="wrap">
   <div class="brand"><span class="dot"></span>아이봄<small>AIBOM</small></div>
-  <div class="ticker"><span class="pulse"></span>Nemotron-Personas-Korea · <b id="cnt">0</b>명 연결<span id="usage"></span></div>
+  <div class="ticker"><span class="pulse"></span><span class="tk-name">Nemotron-Personas-Korea · <b id="cnt">0</b>명</span><span id="usage">사용량 –</span></div>
 </div></div>
 
 <div class="wrap">
@@ -339,23 +342,21 @@ async function apiCall(messages){
       signal:ctrl.signal,body:JSON.stringify({messages,max_tokens:1000})});
     clearTimeout(to);
     const d=await r.json().catch(()=>({}));
-    if(r.status===429||d.stopped){
-      CAP={used:(d.used!=null?d.used:(d.usage&&d.usage.used)),limit:(d.limit!=null?d.limit:(d.usage&&d.usage.limit))};
-      renderUsage();showStopped();throw {cap:true};
-    }
-    if(!r.ok)throw new Error(d.error||("HTTP "+r.status));
-    if(d.usage){CAP=d.usage;renderUsage();if(d.usage.stopped)showStopped();}
+    if(d.usage){CAP=d.usage;renderUsage();}
+    if(r.status===429&&d.capped){CAP={used:d.used,limit:d.limit,capped:true};renderUsage();showStopped();throw {cap:true};}
+    if(!r.ok||d.apiError){const err=new Error(d.error||("HTTP "+r.status));err.api=true;err.lowCredit=!!d.lowCredit;throw err;}
+    if(d.usage&&d.usage.capped)showStopped();
     const txt=(d.content||[]).filter(b=>b.type==="text").map(b=>b.text).join("\n").trim();
     if(!txt)throw new Error("empty");return txt;
   }catch(e){clearTimeout(to);throw e;}
 }
-async function refreshUsage(){try{const r=await fetch("/api/claude");if(r.ok){CAP=await r.json();renderUsage();if(CAP&&CAP.stopped)showStopped();}}catch(e){}}
+async function refreshUsage(){try{const r=await fetch("/api/claude");if(r.ok){CAP=await r.json();renderUsage();if(CAP&&CAP.capped)showStopped();}}catch(e){}}
 function renderUsage(){if(!CAP||CAP.used==null||CAP.limit==null)return;const el=document.getElementById('usage');if(!el)return;
   const pct=Math.min(100,Math.round((CAP.used/CAP.limit)*100));
-  el.textContent=` · 사용량 ${pct}% (${CAP.used}/${CAP.limit})`;
-  el.style.color=pct>=100?'#F2856B':pct>=80?'#F2C14E':'var(--muted)';}
+  el.textContent=`사용량 ${pct}% (${CAP.used}/${CAP.limit})`;
+  el.style.color=pct>=100?'#F2856B':pct>=80?'#F2C14E':'var(--sea)';}
 function showStopped(){STOPPED=true;const b=document.getElementById('stopbar');if(b)b.style.display='block';}
-function stopHtml(){return '<div class="limbox" style="text-align:center">이번 달 사용 한도(100%)에 도달하여 자동 중지되었습니다.</div>';}
+function stopHtml(){return '<div class="limbox" style="text-align:center">앱 호출 상한에 도달하여 자동 중지되었습니다.</div>';}
 function markFB(){usedFallback=true;document.getElementById('sampNote').innerHTML=' <span class="samptag">오프라인 샘플</span>';}
 async function askJSON(prompt){try{return parseJSON(await apiCall([{role:'user',content:prompt}]));}catch(e){markFB();throw e;}}
 function parseJSON(t){const c=t.replace(/```json/gi,'').replace(/```/g,'').trim();const s=c.indexOf('{'),e=c.lastIndexOf('}');return JSON.parse(c.slice(s,e+1));}
@@ -383,10 +384,11 @@ async function parseFree(){
     CELLS.forEach(c=>{if(j[c.k]&&!S.skips[c.k])S.cells[c.k]=String(j[c.k]);});
     note.innerHTML='◆ '+esc(j.reply||'6칸으로 정리했어요. 확인하고 다듬어 주세요.');
   }catch(e){
-    if(e&&e.cap){note.innerHTML='사용 한도에 도달해 중지되었습니다.';b.disabled=false;b.textContent='AI로 6칸 정리하기';return;}
-    if(!S.cells['증상'])S.cells['증상']=txt;
+    if(e&&e.cap){note.innerHTML='앱 호출 상한에 도달해 중지되었습니다.';b.disabled=false;b.textContent='AI로 6칸 정리하기';return;}
+    if(e&&e.api){note.innerHTML='◆ AI 자동분류 실패: '+esc(e.message)+(e.lowCredit?' — Anthropic 콘솔에서 크레딛/결제 설정이 필요합니다.':' — CLAUDE_MODEL(모델명)이 올바른지 확인하세요.')+' 우선 아래 6칸을 직접 채우거나 다시 시도하세요.';b.disabled=false;b.textContent='AI로 6칸 정리하기';return;}
+    markFB();if(!S.cells['증상'])S.cells['증상']=txt;
     const missing=CELLS.filter(c=>!S.cells[c.k]&&!S.skips[c.k]).map(c=>c.k);
-    note.innerHTML='◆ '+esc(`자유 입력을 '증상' 칸에 넣었어요. ${missing.length?missing.join('·')+' 항목을 직접 채우거나 건너뛰어 주세요.':'모든 칸이 채워졌어요.'}`);
+    note.innerHTML='◆ '+esc(`연결 오류로 자동분류를 못 했어요. 자유 입력을 '증상' 칸에 넣었습니다. ${missing.length?missing.join('·')+' 항목을 직접 채우거나 건너뛰어 주세요.':''}`);
   }
   renderWS();b.disabled=false;b.textContent='AI로 6칸 정리하기';
 }
@@ -414,7 +416,7 @@ async function loadPersonas(){
 {"personas":[{"role":"사용자|의사결정자|비용지불자","id":"NPK-######","name":"","age":00,"sex":"남|여","region":"","edu":"","job":"","house":"","feature":"성향 한 줄"}]}
 문제: "${problemText()}" / 대상(누구): "${S.cells['누구']||'미정'}"`);
     S.persona=j.personas||[];
-  }catch(e){if(e&&e.cap){document.getElementById('personaWrap').innerHTML=stopHtml();return;}S.persona=fbPersonas();}
+  }catch(e){if(e&&e.cap){document.getElementById('personaWrap').innerHTML=stopHtml();return;}markFB();S.persona=fbPersonas();}
   if(!S.persona.length)S.persona=fbPersonas();
   S.persona.forEach((p,i)=>S.selected.add(i));
   renderPersonas();
@@ -525,7 +527,7 @@ async function getFeedback(i){
 {"score":1~5,"q":"핵심 추궁 질문","fb":"평가 2문장"}
 문제/아이디어: "${problemText()}" / 타깃: ${chosen||'미정'}`);
     S.judgeFb[i]=r;
-  }catch(e){if(e&&e.cap){document.getElementById('jbody-'+i).innerHTML=stopHtml();return;}S.judgeFb[i]=fbJudge(i);}
+  }catch(e){if(e&&e.cap){document.getElementById('jbody-'+i).innerHTML=stopHtml();return;}markFB();S.judgeFb[i]=fbJudge(i);}
   renderFeedback(i);maybeVerdict();
 }
 function renderFeedback(i){
@@ -561,7 +563,7 @@ async function loadSolution(){
 {"regions":[{"name":"","reason":""}],"target":"핵심 검증 타깃 한 줄","improve":["","",""],"actions":["","",""],"limits":["현재 프로토타입 단계의 한계 2~3개"],"conclusion":"한 줄 결론"}
 문제: "${problemText()}" / 심사요약: ${jsum||'없음'}`);
     S.solution=j;
-  }catch(e){if(e&&e.cap){document.getElementById('solWrap').innerHTML=stopHtml();return;}S.solution=fbSolution();}
+  }catch(e){if(e&&e.cap){document.getElementById('solWrap').innerHTML=stopHtml();return;}markFB();S.solution=fbSolution();}
   renderSolution();
 }
 function renderSolution(){
