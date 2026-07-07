@@ -184,10 +184,11 @@ button{font-family:var(--sans)}
 </style>
 </head>
 <body>
+<div id="stopbar" style="display:none;position:fixed;top:0;left:0;right:0;z-index:100;background:#3a2320;color:#f6c4b8;border-bottom:1px solid #F2856B;padding:10px;text-align:center;font-size:13px;font-family:var(--mono)">⚠ 사용 한도 100% 도달 — 서비스가 자동 중지되었습니다.</div>
 
 <div class="top"><div class="wrap">
   <div class="brand"><span class="dot"></span>아이봄<small>AIBOM</small></div>
-  <div class="ticker"><span class="pulse"></span>Nemotron-Personas-Korea · <b id="cnt">0</b>명 연결</div>
+  <div class="ticker"><span class="pulse"></span>Nemotron-Personas-Korea · <b id="cnt">0</b>명 연결<span id="usage"></span></div>
 </div></div>
 
 <div class="wrap">
@@ -308,6 +309,7 @@ let usedFallback=false;
 
 (function(){let t=7000000,c=0,el=document.getElementById('cnt');
   const iv=setInterval(()=>{c+=Math.ceil((t-c)/12);if(c>=t){c=t;clearInterval(iv);}el.textContent=c.toLocaleString('ko-KR');},40);})();
+refreshUsage();
 
 function start(){document.getElementById('steps').style.display='flex';document.getElementById('foot').style.display='block';renderWS();go(1);}
 function go(n){
@@ -328,17 +330,32 @@ function restart(){S.cells={};S.skips={};CELLS.forEach(c=>{S.cells[c.k]='';S.ski
 const load=t=>`<div class="loadwrap"><div class="spin"></div><p>${t}</p></div>`;
 function esc(s){return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
 
+let CAP=null,STOPPED=false;
 async function apiCall(messages){
+  if(STOPPED)throw {cap:true};
   const ctrl=new AbortController();const to=setTimeout(()=>ctrl.abort(),45000);
   try{
-    const r=await fetch("https://api.anthropic.com/v1/messages",{method:"POST",
-      headers:{"Content-Type":"application/json"},signal:ctrl.signal,
-      body:JSON.stringify({model:"claude-sonnet-4-6",max_tokens:1000,messages})});
-    clearTimeout(to);const d=await r.json();
+    const r=await fetch("/api/claude",{method:"POST",headers:{"Content-Type":"application/json"},
+      signal:ctrl.signal,body:JSON.stringify({messages,max_tokens:1000})});
+    clearTimeout(to);
+    const d=await r.json().catch(()=>({}));
+    if(r.status===429||d.stopped){
+      CAP={used:(d.used!=null?d.used:(d.usage&&d.usage.used)),limit:(d.limit!=null?d.limit:(d.usage&&d.usage.limit))};
+      renderUsage();showStopped();throw {cap:true};
+    }
+    if(!r.ok)throw new Error(d.error||("HTTP "+r.status));
+    if(d.usage){CAP=d.usage;renderUsage();if(d.usage.stopped)showStopped();}
     const txt=(d.content||[]).filter(b=>b.type==="text").map(b=>b.text).join("\n").trim();
     if(!txt)throw new Error("empty");return txt;
   }catch(e){clearTimeout(to);throw e;}
 }
+async function refreshUsage(){try{const r=await fetch("/api/claude");if(r.ok){CAP=await r.json();renderUsage();if(CAP&&CAP.stopped)showStopped();}}catch(e){}}
+function renderUsage(){if(!CAP||CAP.used==null||CAP.limit==null)return;const el=document.getElementById('usage');if(!el)return;
+  const pct=Math.min(100,Math.round((CAP.used/CAP.limit)*100));
+  el.textContent=` · 사용량 ${pct}% (${CAP.used}/${CAP.limit})`;
+  el.style.color=pct>=100?'#F2856B':pct>=80?'#F2C14E':'var(--muted)';}
+function showStopped(){STOPPED=true;const b=document.getElementById('stopbar');if(b)b.style.display='block';}
+function stopHtml(){return '<div class="limbox" style="text-align:center">이번 달 사용 한도(100%)에 도달하여 자동 중지되었습니다.</div>';}
 function markFB(){usedFallback=true;document.getElementById('sampNote').innerHTML=' <span class="samptag">오프라인 샘플</span>';}
 async function askJSON(prompt){try{return parseJSON(await apiCall([{role:'user',content:prompt}]));}catch(e){markFB();throw e;}}
 function parseJSON(t){const c=t.replace(/```json/gi,'').replace(/```/g,'').trim();const s=c.indexOf('{'),e=c.lastIndexOf('}');return JSON.parse(c.slice(s,e+1));}
@@ -366,6 +383,7 @@ async function parseFree(){
     CELLS.forEach(c=>{if(j[c.k]&&!S.skips[c.k])S.cells[c.k]=String(j[c.k]);});
     note.innerHTML='◆ '+esc(j.reply||'6칸으로 정리했어요. 확인하고 다듬어 주세요.');
   }catch(e){
+    if(e&&e.cap){note.innerHTML='사용 한도에 도달해 중지되었습니다.';b.disabled=false;b.textContent='AI로 6칸 정리하기';return;}
     if(!S.cells['증상'])S.cells['증상']=txt;
     const missing=CELLS.filter(c=>!S.cells[c.k]&&!S.skips[c.k]).map(c=>c.k);
     note.innerHTML='◆ '+esc(`자유 입력을 '증상' 칸에 넣었어요. ${missing.length?missing.join('·')+' 항목을 직접 채우거나 건너뛰어 주세요.':'모든 칸이 채워졌어요.'}`);
@@ -396,7 +414,7 @@ async function loadPersonas(){
 {"personas":[{"role":"사용자|의사결정자|비용지불자","id":"NPK-######","name":"","age":00,"sex":"남|여","region":"","edu":"","job":"","house":"","feature":"성향 한 줄"}]}
 문제: "${problemText()}" / 대상(누구): "${S.cells['누구']||'미정'}"`);
     S.persona=j.personas||[];
-  }catch(e){S.persona=fbPersonas();}
+  }catch(e){if(e&&e.cap){document.getElementById('personaWrap').innerHTML=stopHtml();return;}S.persona=fbPersonas();}
   if(!S.persona.length)S.persona=fbPersonas();
   S.persona.forEach((p,i)=>S.selected.add(i));
   renderPersonas();
@@ -464,6 +482,7 @@ async function sendChat(){
     t.querySelector('.bub').innerHTML=esc(reply);
     S.chat.history.push({role:'assistant',content:reply});
   }catch(e){
+    if(e&&e.cap){t.querySelector('.bub').innerHTML='사용 한도에 도달해 대화를 중지합니다.';document.getElementById('mSend').disabled=true;return;}
     markFB();const pool=S.chat.profile.fallback;
     const idx=S.chat.history.filter(m=>m.role==='assistant').length%pool.length;
     const fb=pool[idx];t.querySelector('.bub').innerHTML=esc(fb);S.chat.history.push({role:'assistant',content:fb});
@@ -506,7 +525,7 @@ async function getFeedback(i){
 {"score":1~5,"q":"핵심 추궁 질문","fb":"평가 2문장"}
 문제/아이디어: "${problemText()}" / 타깃: ${chosen||'미정'}`);
     S.judgeFb[i]=r;
-  }catch(e){S.judgeFb[i]=fbJudge(i);}
+  }catch(e){if(e&&e.cap){document.getElementById('jbody-'+i).innerHTML=stopHtml();return;}S.judgeFb[i]=fbJudge(i);}
   renderFeedback(i);maybeVerdict();
 }
 function renderFeedback(i){
@@ -542,7 +561,7 @@ async function loadSolution(){
 {"regions":[{"name":"","reason":""}],"target":"핵심 검증 타깃 한 줄","improve":["","",""],"actions":["","",""],"limits":["현재 프로토타입 단계의 한계 2~3개"],"conclusion":"한 줄 결론"}
 문제: "${problemText()}" / 심사요약: ${jsum||'없음'}`);
     S.solution=j;
-  }catch(e){S.solution=fbSolution();}
+  }catch(e){if(e&&e.cap){document.getElementById('solWrap').innerHTML=stopHtml();return;}S.solution=fbSolution();}
   renderSolution();
 }
 function renderSolution(){
