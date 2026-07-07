@@ -73,16 +73,27 @@ module.exports = async (req, res) => {
     return res.status(400).json({ error: "messages 배열이 필요합니다." });
   }
 
-  const payload = { model: MODEL, max_tokens: Math.min(Number(body.max_tokens) || 1400, MAX_TOKENS), messages };
+  // claude-sonnet-5는 기본적으로 adaptive thinking이 켜져 사고 토큰이 max_tokens를 잠식 → JSON 잘림/지연 발생.
+  // 이 앱은 구조화 JSON 위주라 사고를 끄면 응답이 완결되고 속도도 빨라진다. (sonnet-5는 disabled 지원)
+  const payload = { model: MODEL, max_tokens: Math.min(Number(body.max_tokens) || 1400, MAX_TOKENS), messages, thinking: { type: "disabled" } };
   // temperature 파라미터는 최신 모델(claude-sonnet-5 등)에서 지원 중단되어 전송하지 않습니다.
 
   try {
-    const ar = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: { "content-type":"application/json", "x-api-key": key, "anthropic-version":"2023-06-01" },
-      body: JSON.stringify(payload),
-    });
-    const data = await ar.json();
+    const callAnthropic = async (pl) => {
+      const r = await fetch("https://api.anthropic.com/v1/messages", {
+        method: "POST",
+        headers: { "content-type":"application/json", "x-api-key": key, "anthropic-version":"2023-06-01" },
+        body: JSON.stringify(pl),
+      });
+      return { r, data: await r.json() };
+    };
+    let { ar, data } = await callAnthropic(payload).then(o => ({ ar: o.r, data: o.data }));
+    // 모델이 thinking:disabled를 거부하면(400) thinking 없이 1회 재시도
+    if (!ar.ok && ar.status === 400 && /thinking/i.test(JSON.stringify(data && data.error || ""))) {
+      const p2 = { ...payload }; delete p2.thinking;
+      const retry = await callAnthropic(p2);
+      ar = retry.r; data = retry.data;
+    }
     if (!ar.ok) {
       const msg = (data && data.error && data.error.message) || ("Anthropic API 오류 (HTTP " + ar.status + ")");
       const lowCredit = /credit|balance|billing|payment/i.test(msg);
