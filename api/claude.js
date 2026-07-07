@@ -74,8 +74,7 @@ module.exports = async (req, res) => {
   }
 
   const payload = { model: MODEL, max_tokens: Math.min(Number(body.max_tokens) || 1400, MAX_TOKENS), messages };
-  const t = Number(body.temperature);
-  if (!isNaN(t)) payload.temperature = Math.max(0, Math.min(1, t));
+  // temperature 파라미터는 최신 모델(claude-sonnet-5 등)에서 지원 중단되어 전송하지 않습니다.
 
   try {
     const ar = await fetch("https://api.anthropic.com/v1/messages", {
