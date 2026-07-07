@@ -1,46 +1,49 @@
-// AIBOM · Claude 프록시 (Vercel Serverless Function)
-// - 프론트엔드는 이 엔드포인트(/api/claude)만 호출합니다. Anthropic 키는 서버에만 존재.
-// - 사용량 상한(MAX_CALLS)에 도달하면 자동 중지(429)합니다.
-// - Vercel KV(Upstash)가 연결돼 있으면 월 단위 전역 카운터로 정확히 집계하고,
-//   없으면 인스턴스 메모리로 근사 집계합니다(콜드스타트 시 초기화 가능).
-// - 진짜 하드스톱은 Anthropic 콘솔의 "월 지출 한도"입니다. 한도 초과 시 여기서 감지해 중지 처리합니다.
+// AIBOM · Claude 프록시 + 사용량/남용 방지 (Vercel Serverless)
+// - 프론트는 /api/claude 만 호출. Anthropic 키는 서버에만 존재.
+// - 전체 상한(MAX_CALLS) + 1인(IP) 하루 상한(MAX_CALLS_PER_IP)으로 남용 방지.
+// - 정확한 전역/IP 카운터를 위해 Vercel KV(Upstash) 연결을 권장(필수에 가까움).
+//   KV 미연결 시 전역은 메모리 근사, IP 제한은 비활성(README 참고).
 
-const LIMIT = parseInt(process.env.MAX_CALLS || "300", 10);           // 이번 달 허용 호출 수
-const MODEL = process.env.CLAUDE_MODEL || "claude-haiku-4-5-20251001"; // 비용 최소 모델(기본). 필요시 claude-sonnet-5 등으로 변경
-const MAX_TOKENS = parseInt(process.env.MAX_TOKENS || "1000", 10);
-const KV_URL = process.env.KV_REST_API_URL;
-const KV_TOKEN = process.env.KV_REST_API_TOKEN;
+const LIMIT      = parseInt(process.env.MAX_CALLS || "6000", 10);        // 이번 달 전체 허용 호출 수
+const MAX_PER_IP = parseInt(process.env.MAX_CALLS_PER_IP || "40", 10);   // 1인(IP) 하루 허용 호출 수
+const MODEL      = process.env.CLAUDE_MODEL || "claude-sonnet-5";        // 기본: Sonnet 5 (정교함/비용 균형)
+const MAX_TOKENS = parseInt(process.env.MAX_TOKENS || "2000", 10);
+const KV_URL     = process.env.KV_REST_API_URL;
+const KV_TOKEN   = process.env.KV_REST_API_TOKEN;
+const KV         = !!(KV_URL && KV_TOKEN);
 
-let mem = { month: "", n: 0 };
-function ym() {
-  const d = new Date();
-  return d.getUTCFullYear() + "-" + String(d.getUTCMonth() + 1).padStart(2, "0");
-}
-async function kv(path) {
-  const r = await fetch(`${KV_URL}/${path}`, { headers: { Authorization: `Bearer ${KV_TOKEN}` } });
+function ym(){const d=new Date();return d.getUTCFullYear()+"-"+String(d.getUTCMonth()+1).padStart(2,"0");}
+function ymd(){const d=new Date();return ym()+"-"+String(d.getUTCDate()).padStart(2,"0");}
+
+async function redis(cmd){
+  const r = await fetch(KV_URL, { method:"POST",
+    headers:{ Authorization:"Bearer "+KV_TOKEN, "content-type":"application/json" },
+    body: JSON.stringify(cmd) });
   const j = await r.json();
+  if (j.error) throw new Error(j.error);
   return j.result;
 }
-async function getUsed() {
-  const m = ym();
-  if (KV_URL && KV_TOKEN) {
-    const v = await kv(`get/aibom:calls:${m}`);
-    return parseInt(v || "0", 10) || 0;
-  }
-  if (mem.month !== m) mem = { month: m, n: 0 };
-  return mem.n;
+
+let mem = { month:"", n:0 };
+async function getUsed(){
+  if (KV){ const v = await redis(["GET","aibom:calls:"+ym()]); return parseInt(v||"0",10)||0; }
+  const m = ym(); if (mem.month!==m) mem={month:m,n:0}; return mem.n;
 }
-async function bump() {
-  const m = ym();
-  if (KV_URL && KV_TOKEN) { await kv(`incr/aibom:calls:${m}`); return; }
-  if (mem.month !== m) mem = { month: m, n: 0 };
-  mem.n++;
+async function bumpGlobal(){
+  if (KV){ await redis(["INCR","aibom:calls:"+ym()]); return; }
+  const m = ym(); if (mem.month!==m) mem={month:m,n:0}; mem.n++;
+}
+async function bumpIP(ip){
+  if (!KV) return 0;                       // KV 없으면 IP 제한 비활성(통과)
+  const key = "aibom:ip:"+ymd()+":"+ip;
+  const n = await redis(["INCR", key]);
+  if (n===1) await redis(["EXPIRE", key, 172800]); // 2일 후 만료
+  return n;
 }
 
 module.exports = async (req, res) => {
-  const used = await getUsed().catch(() => 0);
+  let used = 0; try { used = await getUsed(); } catch(_){}
 
-  // 사용량 조회 (프론트 로드 시)
   if (req.method === "GET") {
     return res.status(200).json({ used, limit: LIMIT, capped: used >= LIMIT });
   }
@@ -49,51 +52,46 @@ module.exports = async (req, res) => {
   }
 
   const key = process.env.ANTHROPIC_API_KEY;
-  if (!key) {
-    return res.status(500).json({ error: "서버에 ANTHROPIC_API_KEY가 설정되지 않았습니다. Vercel 환경변수를 확인하세요." });
+  if (!key) return res.status(500).json({ error: "서버에 ANTHROPIC_API_KEY가 설정되지 않았습니다." });
+
+  // 전체 상한
+  if (used >= LIMIT) {
+    return res.status(429).json({ capped: true, used, limit: LIMIT, error: "전체 사용 한도(" + LIMIT + "회)에 도달하여 중지되었습니다." });
   }
 
-  // 앱 레벨 상한 도달 → 자동 중지
-  if (used >= LIMIT) {
-    return res.status(429).json({ capped: true, used, limit: LIMIT, error: "앱 호출 상한(" + LIMIT + "회)에 도달하여 중지되었습니다." });
+  // 1인(IP) 하루 상한
+  const ip = (((req.headers["x-forwarded-for"] || "").split(",")[0]) || "").trim() || "unknown";
+  let ipN = 0; try { ipN = await bumpIP(ip); } catch(_){}
+  if (ipN > MAX_PER_IP) {
+    return res.status(429).json({ ipLimited: true, error: "1인 체험 한도(" + MAX_PER_IP + "회)에 도달했습니다." });
   }
 
   let body = req.body;
-  if (typeof body === "string") { try { body = JSON.parse(body); } catch (_) { body = {}; } }
+  if (typeof body === "string") { try { body = JSON.parse(body); } catch(_){ body = {}; } }
   const messages = body && body.messages;
   if (!Array.isArray(messages) || !messages.length) {
     return res.status(400).json({ error: "messages 배열이 필요합니다." });
   }
 
+  const payload = { model: MODEL, max_tokens: Math.min(Number(body.max_tokens) || 1400, MAX_TOKENS), messages };
+  const t = Number(body.temperature);
+  if (!isNaN(t)) payload.temperature = Math.max(0, Math.min(1, t));
+
   try {
     const ar = await fetch("https://api.anthropic.com/v1/messages", {
       method: "POST",
-      headers: {
-        "content-type": "application/json",
-        "x-api-key": key,
-        "anthropic-version": "2023-06-01",
-      },
-      body: JSON.stringify({
-        model: MODEL,
-        max_tokens: Math.min(Number(body.max_tokens) || MAX_TOKENS, MAX_TOKENS),
-        messages,
-      }),
+      headers: { "content-type":"application/json", "x-api-key": key, "anthropic-version":"2023-06-01" },
+      body: JSON.stringify(payload),
     });
     const data = await ar.json();
-
     if (!ar.ok) {
-      // Anthropic 오류. 지출 한도/크레딧 소진이면 중지로 처리.
       const msg = (data && data.error && data.error.message) || ("Anthropic API 오류 (HTTP " + ar.status + ")");
       const lowCredit = /credit|balance|billing|payment/i.test(msg);
       return res.status(ar.status).json({ apiError: true, lowCredit, used, limit: LIMIT, error: msg });
     }
-
-    await bump().catch(() => {});
-    const nowUsed = await getUsed().catch(() => used + 1);
-    return res.status(200).json({
-      content: data.content,
-      usage: { used: nowUsed, limit: LIMIT, capped: nowUsed >= LIMIT },
-    });
+    try { await bumpGlobal(); } catch(_){}
+    let nowUsed = used + 1; try { nowUsed = await getUsed(); } catch(_){}
+    return res.status(200).json({ content: data.content, usage: { used: nowUsed, limit: LIMIT, capped: nowUsed >= LIMIT } });
   } catch (e) {
     return res.status(502).json({ error: "프록시 호출 실패: " + String((e && e.message) || e), used, limit: LIMIT });
   }
