@@ -412,11 +412,27 @@ function finishStep1(){
 }
 
 const roleClass={'사용자':'role-u','의사결정자':'role-d','비용지불자':'role-p'};
+// 매 호출마다 서로 다른 인물이 나오도록 무작위 다양성 제약을 프롬프트에 주입
+// (claude-sonnet-5는 temperature 미지원 → 시드·연령대·성씨 풀로 변주를 만든다)
+function diversityBlock(){
+  const seed=Math.random().toString(36).slice(2,8)+Date.now().toString(36).slice(-4);
+  const pick=(arr,n)=>{const a=[...arr];const o=[];for(let k=0;k<n&&a.length;k++)o.push(a.splice(Math.floor(Math.random()*a.length),1)[0]);return o;};
+  const surnames=['김','이','박','최','정','강','조','윤','장','임','한','오','서','신','권','황','안','송','류','전','홍','고','문','양','손','배','백','허','유','남','심','노','하','곽','성','차','주','우','구','민','진','엄','채','원','천','방','현','함','변','염','여','추','도','석','선','설','마','길','연','위','표','명','반'];
+  const bands=['20대 초반','20대 후반','30대 초반','30대 후반','40대 초반','40대 후반','50대','60대'];
+  const lifes=['1인가구·자취','신혼·맞벌이','자녀 양육 4인가구','부모 부양','시니어 1인','룸메이트 공유','원격근무 프리랜서','교대근무 직장인','소상공인 자영업','대학원생·연구'];
+  const b=pick(bands,3), s=pick(surnames,7), lf=pick(lifes,3);
+  return `\n[다양성 규칙 · 무작위 시드 ${seed}] 매 생성마다 반드시 서로 다른 인물을 만들어라.
+- 세 인물의 연령대를 각각 다르게: 사용자≈${b[0]}, 의사결정자≈${b[1]}, 비용지불자≈${b[2]} (문제 맥락상 어색하면 조정 가능).
+- 성별을 한쪽으로 몰지 말고 섞어라.
+- 라이프스타일도 서로 다르게: 예) ${lf.join(' / ')}.
+- 흔한 기본 이름(민준·서연·지훈·서윤·하준·지우·도윤·수아 등) 금지. 성씨를 김·이·박에만 몰지 말고 다음도 활용: ${s.join('·')} 등.
+- 직업과 지역(시군구)도 세 인물 간 확연히 다르게.`;
+}
 async function loadPersonas(){
   try{
     const j=await askJSON(`당신은 NVIDIA Nemotron-Personas-Korea에 기반한 아이봄 페르소나 엔진입니다. 아래 문제의 고객을 VPC 3역할로 1명씩 구성하세요: (1)사용자=문제를 직접 겪고 쓸 사람 (2)의사결정자=도입/구매 결정자 (3)비용지불자=실제 결제자. 각 인물은 실제 통계 분포에 맞는 구체적 한국인이어야 하며, 이름·나이·지역(시군구까지)·직업·가구가 서로 자연스럽게 맞물려야 합니다(예: 대학가 자취생이면 20대·해당 대학 인근·1인가구). 'feature'는 소비 성향과 이 문제와의 관련성을 한 문장으로 구체적으로. 뻔한 일반형 인물 금지. 반드시 JSON만:
 {"personas":[{"role":"사용자|의사결정자|비용지불자","id":"NPK-######","name":"","age":00,"sex":"남|여","region":"","edu":"","job":"","house":"","feature":"성향 한 줄"}]}
-문제: "${problemText()}" / 대상(누구): "${S.cells['누구']||'미정'}"`,{max_tokens:1600,temperature:0.9});
+문제: "${problemText()}" / 대상(누구): "${S.cells['누구']||'미정'}"${diversityBlock()}`,{max_tokens:1600});
     S.persona=j.personas||[];
   }catch(e){if(e&&e.cap){document.getElementById('personaWrap').innerHTML=stopHtml();return;}markFB();S.persona=fbPersonas();}
   if(!S.persona.length)S.persona=fbPersonas();
