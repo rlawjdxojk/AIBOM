@@ -42,7 +42,7 @@ module.exports = async (req, res) => {
 
   // 사용량 조회 (프론트 로드 시)
   if (req.method === "GET") {
-    return res.status(200).json({ used, limit: LIMIT, stopped: used >= LIMIT });
+    return res.status(200).json({ used, limit: LIMIT, capped: used >= LIMIT });
   }
   if (req.method !== "POST") {
     return res.status(405).json({ error: "POST만 허용됩니다." });
@@ -55,7 +55,7 @@ module.exports = async (req, res) => {
 
   // 앱 레벨 상한 도달 → 자동 중지
   if (used >= LIMIT) {
-    return res.status(429).json({ stopped: true, used, limit: LIMIT, error: "이번 달 사용 한도(100%)에 도달하여 중지되었습니다." });
+    return res.status(429).json({ capped: true, used, limit: LIMIT, error: "앱 호출 상한(" + LIMIT + "회)에 도달하여 중지되었습니다." });
   }
 
   let body = req.body;
@@ -83,20 +83,16 @@ module.exports = async (req, res) => {
 
     if (!ar.ok) {
       // Anthropic 오류. 지출 한도/크레딧 소진이면 중지로 처리.
-      const blob = JSON.stringify(data || {});
-      const billing = /credit|billing|quota|balance|payment|limit|exceed/i.test(blob);
-      return res.status(ar.status).json({
-        stopped: billing,
-        used, limit: LIMIT,
-        error: (data && data.error && data.error.message) || "Anthropic API 오류",
-      });
+      const msg = (data && data.error && data.error.message) || ("Anthropic API 오류 (HTTP " + ar.status + ")");
+      const lowCredit = /credit|balance|billing|payment/i.test(msg);
+      return res.status(ar.status).json({ apiError: true, lowCredit, used, limit: LIMIT, error: msg });
     }
 
     await bump().catch(() => {});
     const nowUsed = await getUsed().catch(() => used + 1);
     return res.status(200).json({
       content: data.content,
-      usage: { used: nowUsed, limit: LIMIT, stopped: nowUsed >= LIMIT },
+      usage: { used: nowUsed, limit: LIMIT, capped: nowUsed >= LIMIT },
     });
   } catch (e) {
     return res.status(502).json({ error: "프록시 호출 실패: " + String((e && e.message) || e), used, limit: LIMIT });
