@@ -334,15 +334,17 @@ const load=t=>`<div class="loadwrap"><div class="spin"></div><p>${t}</p></div>`;
 function esc(s){return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
 
 let CAP=null,STOPPED=false;
-async function apiCall(messages){
+async function apiCall(messages,opts){
   if(STOPPED)throw {cap:true};
-  const ctrl=new AbortController();const to=setTimeout(()=>ctrl.abort(),45000);
+  opts=opts||{};
+  const ctrl=new AbortController();const to=setTimeout(()=>ctrl.abort(),60000);
   try{
     const r=await fetch("/api/claude",{method:"POST",headers:{"Content-Type":"application/json"},
-      signal:ctrl.signal,body:JSON.stringify({messages,max_tokens:1000})});
+      signal:ctrl.signal,body:JSON.stringify({messages,max_tokens:opts.max_tokens||1400,temperature:opts.temperature})});
     clearTimeout(to);
     const d=await r.json().catch(()=>({}));
     if(d.usage){CAP=d.usage;renderUsage();}
+    if(r.status===429&&d.ipLimited){showStopped('체험 가능 횟수를 모두 사용하셨습니다. (1인 제한)');throw {cap:true};}
     if(r.status===429&&d.capped){CAP={used:d.used,limit:d.limit,capped:true};renderUsage();showStopped();throw {cap:true};}
     if(!r.ok||d.apiError){const err=new Error(d.error||("HTTP "+r.status));err.api=true;err.lowCredit=!!d.lowCredit;throw err;}
     if(d.usage&&d.usage.capped)showStopped();
@@ -355,10 +357,10 @@ function renderUsage(){if(!CAP||CAP.used==null||CAP.limit==null)return;const el=
   const pct=Math.min(100,Math.round((CAP.used/CAP.limit)*100));
   el.textContent=`사용량 ${pct}% (${CAP.used}/${CAP.limit})`;
   el.style.color=pct>=100?'#F2856B':pct>=80?'#F2C14E':'var(--sea)';}
-function showStopped(){STOPPED=true;const b=document.getElementById('stopbar');if(b)b.style.display='block';}
+function showStopped(msg){STOPPED=true;const b=document.getElementById('stopbar');if(b){if(msg)b.textContent='⚠ '+msg;b.style.display='block';}}
 function stopHtml(){return '<div class="limbox" style="text-align:center">앱 호출 상한에 도달하여 자동 중지되었습니다.</div>';}
 function markFB(){usedFallback=true;document.getElementById('sampNote').innerHTML=' <span class="samptag">오프라인 샘플</span>';}
-async function askJSON(prompt){try{return parseJSON(await apiCall([{role:'user',content:prompt}]));}catch(e){markFB();throw e;}}
+async function askJSON(prompt,opts){return parseJSON(await apiCall([{role:'user',content:prompt}],opts));}
 function parseJSON(t){const c=t.replace(/```json/gi,'').replace(/```/g,'').trim();const s=c.indexOf('{'),e=c.lastIndexOf('}');return JSON.parse(c.slice(s,e+1));}
 
 function renderWS(){
@@ -380,7 +382,7 @@ async function parseFree(){
   try{
     const j=await askJSON(`아래 창업/문제 서술을 육하원칙 6칸으로 분류하라. 각 칸은 없으면 빈 문자열. 그리고 서술에서 파악한 내용을 구체적으로 짚는 코멘트(reply)를 작성하되, 부족한 칸이 있으면 무엇을 더 적으면 좋을지 콕 집어라. 절대 "좋은 아이디어네요" 같은 상투적 표현 금지. 반드시 JSON만:
 {"누구":"","언제":"","어디서":"","증상":"","원인":"","시도":"","reply":"서술을 짚는 구체 코멘트 2문장"}
-서술: "${txt}"`);
+서술: "${txt}"`,{max_tokens:1200,temperature:0.5});
     CELLS.forEach(c=>{if(j[c.k]&&!S.skips[c.k])S.cells[c.k]=String(j[c.k]);});
     note.innerHTML='◆ '+esc(j.reply||'6칸으로 정리했어요. 확인하고 다듬어 주세요.');
   }catch(e){
@@ -412,9 +414,9 @@ function finishStep1(){
 const roleClass={'사용자':'role-u','의사결정자':'role-d','비용지불자':'role-p'};
 async function loadPersonas(){
   try{
-    const j=await askJSON(`당신은 아이봄의 페르소나 엔진입니다. 아래 문제의 고객을 VPC 3역할로 구성하세요: (1)사용자=문제를 직접 겪고 제품을 쓸 사람, (2)의사결정자=도입/구매를 결정하는 사람, (3)비용지불자=실제 돈을 내는 사람. 각 역할마다 NVIDIA Nemotron-Personas-Korea 구조(성별,나이,지역(시도+시군구),학력,직업,가구형태)에 맞는 실제 같은 한국인 1명씩. 반드시 JSON만:
+    const j=await askJSON(`당신은 NVIDIA Nemotron-Personas-Korea에 기반한 아이봄 페르소나 엔진입니다. 아래 문제의 고객을 VPC 3역할로 1명씩 구성하세요: (1)사용자=문제를 직접 겪고 쓸 사람 (2)의사결정자=도입/구매 결정자 (3)비용지불자=실제 결제자. 각 인물은 실제 통계 분포에 맞는 구체적 한국인이어야 하며, 이름·나이·지역(시군구까지)·직업·가구가 서로 자연스럽게 맞물려야 합니다(예: 대학가 자취생이면 20대·해당 대학 인근·1인가구). 'feature'는 소비 성향과 이 문제와의 관련성을 한 문장으로 구체적으로. 뻔한 일반형 인물 금지. 반드시 JSON만:
 {"personas":[{"role":"사용자|의사결정자|비용지불자","id":"NPK-######","name":"","age":00,"sex":"남|여","region":"","edu":"","job":"","house":"","feature":"성향 한 줄"}]}
-문제: "${problemText()}" / 대상(누구): "${S.cells['누구']||'미정'}"`);
+문제: "${problemText()}" / 대상(누구): "${S.cells['누구']||'미정'}"`,{max_tokens:1600,temperature:0.9});
     S.persona=j.personas||[];
   }catch(e){if(e&&e.cap){document.getElementById('personaWrap').innerHTML=stopHtml();return;}markFB();S.persona=fbPersonas();}
   if(!S.persona.length)S.persona=fbPersonas();
@@ -480,7 +482,7 @@ async function sendChat(){
   const t=addChat('ai','<div class="typing"><i></i><i></i><i></i></div>');
   try{
     const msgs=[{role:'user',content:S.chat.profile.priming},{role:'assistant',content:S.chat.profile.greeting},...S.chat.history];
-    const reply=await apiCall(msgs);
+    const reply=await apiCall(msgs,{max_tokens:600,temperature:0.9});
     t.querySelector('.bub').innerHTML=esc(reply);
     S.chat.history.push({role:'assistant',content:reply});
   }catch(e){
@@ -497,7 +499,7 @@ function openPersonaChat(i){
     emoji:'🧑', initial:(p.name||'고').slice(0,1), name:`${p.name} · ${p.role}`,
     sub:`${p.age}세 ${p.job} · ${p.region}`,
     greeting:`안녕하세요, ${p.name}이에요. ${p.job} 하고 있어요. 편하게 물어보세요.`,
-    priming:`너는 아래 한국인 '${p.name}'이다. 이 인물로서 1인칭·자연스러운 구어체로 짧게(2~3문장) 대화하라. 너는 이 문제/아이디어의 '${p.role}'로서 솔직하게 반응한다. 근거 없는 칭찬·과장 금지, 실제 사람처럼 망설임·조건도 표현하라. 문제: "${problemText()}". 인물정보: ${JSON.stringify(p)}`,
+    priming:`너는 한국인 '${p.name}'(${p.age}세·${p.region}·${p.job})이다. 이 사람의 나이·지역·직업·가구 맥락에서 실제 나올 법한 말투·관점으로만, 1인칭 구어체로 짧게(2~3문장) 대화하라. 너는 이 아이디어의 '${p.role}'다. 규칙: (1)뻔한 칭찬·일반론 금지 (2)가격이 얼마면 살지·어디서 쓸지·지금 대안은 뭔지 등 구체적 지점에 반응 (3)실제 사람처럼 망설임·조건·귀찮음도 드러내라 (4)없는 사실을 지어내지 말고 네 처지에서 판단하라. 문제: "${problemText()}". 인물정보: ${JSON.stringify(p)}`,
     suggest:['이 문제, 실제로 겪으세요?','돈 내고 쓸 의향 있으세요?','지금은 어떻게 해결하세요?','뭐가 제일 아쉬워요?'],
     fallback:['음, 겪긴 하는데 그게 돈 낼 만큼 큰 불편인지는 잘 모르겠어요.','솔직히 지금 방식도 그럭저럭이라서요. 확 끌리진 않네요.','편하면 써볼 의향은 있어요. 근데 가격이랑 후기부터 볼 것 같아요.','제 주변엔 이거 필요해할 사람 몇 있을 것 같긴 해요.']
   });
@@ -523,9 +525,9 @@ async function getFeedback(i){
   body.innerHTML='<div class="typing"><i></i><i></i><i></i></div>';
   const j=JUDGES[i];const chosen=[...S.selected].map(k=>S.persona[k]).map(p=>`${p.name}(${p.role})`).join(', ');
   try{
-    const r=await askJSON(`너는 '${j.role}'이다. 창업 아이디어를 '${j.angle}' 관점에서 날카롭지만 건설적으로 심사한다. 구체적 시나리오로 추궁 질문 1개와 평가 2문장, 1~5점. 반드시 JSON만:
+    const r=await askJSON(`너는 창업 심사위원 '${j.role}'이다. 아래 아이디어를 '${j.angle}' 관점에서 심사하라. 규칙: 일반론·매크로 코멘트('시장조사가 필요하다','차별화가 중요하다' 류) 절대 금지. 오직 이 아이디어에만 해당하는 구체적 약점/기회를 실제 숫자·상황·경쟁 맥락을 들어 지적하라. 추궁 질문은 창업자가 즉답해야 할 날카로운 1개. 점수는 냉정하게 1~5. 반드시 JSON만:
 {"score":1~5,"q":"핵심 추궁 질문","fb":"평가 2문장"}
-문제/아이디어: "${problemText()}" / 타깃: ${chosen||'미정'}`);
+문제/아이디어: "${problemText()}" / 타깃: ${chosen||'미정'}`,{max_tokens:900,temperature:0.7});
     S.judgeFb[i]=r;
   }catch(e){if(e&&e.cap){document.getElementById('jbody-'+i).innerHTML=stopHtml();return;}markFB();S.judgeFb[i]=fbJudge(i);}
   renderFeedback(i);maybeVerdict();
@@ -548,7 +550,7 @@ function openJudgeChat(i){
   openChat({
     emoji:j.emoji, initial:j.emoji, name:j.role, sub:`${j.angle} 관점 심사`,
     greeting:`${j.role}입니다. ${j.angle} 관점에서 보죠. 이 아이디어, 한번 설득해 보시겠어요?`,
-    priming:`너는 창업 심사위원 '${j.role}'이다. 아이디어를 '${j.angle}' 관점에서 날카롭지만 건설적으로 심사한다. 1인칭·존댓말·짧게(2~3문장). 근거 없는 칭찬 금지, 구체적 반문과 다음 질문을 던져라. 문제/아이디어: "${problemText()}".`,
+    priming:`너는 창업 심사위원 '${j.role}'이다. '${j.angle}' 관점에서 이 아이디어를 심사·문답한다. 1인칭·존댓말·짧게(2~3문장). 규칙: 일반론·매크로 조언 금지, 이 아이디어의 구체적 지점을 파고드는 반문과 후속 질문만. 창업자의 답이 약하면 근거를 요구하라. 문제/아이디어: "${problemText()}".`,
     suggest:['시장이 충분히 크다고 봅니다','경쟁사와 이렇게 다릅니다','이렇게 수익을 냅니다','어떻게 검증하면 될까요?'],
     fallback:['숫자가 없으면 설득이 어렵습니다. 근거를 보여주세요.','경쟁 대비 방어 요소가 뭔지 다시 정리해보세요.','타깃을 더 좁히면 검증 속도가 빨라집니다.','첫 지표와 실행 순서를 명확히 하세요.']
   });
@@ -559,9 +561,9 @@ async function loadSolution(){
   document.getElementById('solWrap').innerHTML=load('실행안 도출 중…');
   const jsum=JUDGES.map((j,i)=>S.judgeFb[i]?`${j.angle}:${S.judgeFb[i].score}`:'').filter(Boolean).join(', ');
   try{
-    const j=await askJSON(`당신은 아이봄의 솔루션 엔진입니다. 통계청 인구·상권 공공데이터와 Nemotron 페르소나 분석을 종합해, 이 문제를 '어디서·누구에게' 먼저 검증할지 실행안을 제시하세요. 지역은 실제 한국 행정구역(구·동 단위)으로 구체적으로. 반드시 JSON만:
+    const j=await askJSON(`당신은 아이봄의 솔루션 엔진입니다. 통계청 인구·상권 공공데이터와 Nemotron 페르소나 분석을 종합해, 이 문제를 '어디서·누구에게' 먼저 검증할지 실행안을 제시하세요. 규칙: 지역은 실제 한국 행정구역(구·동 단위) 2~3곳, 각 지역의 인구·상권 특성을 근거로 '왜 이 문제 검증에 적합한지' 구체적으로. improve·actions·limits는 일반론 금지, 이 아이디어에 특화된 항목으로. 반드시 JSON만:
 {"regions":[{"name":"","reason":""}],"target":"핵심 검증 타깃 한 줄","improve":["","",""],"actions":["","",""],"limits":["현재 프로토타입 단계의 한계 2~3개"],"conclusion":"한 줄 결론"}
-문제: "${problemText()}" / 심사요약: ${jsum||'없음'}`);
+문제: "${problemText()}" / 심사요약: ${jsum||'없음'}`,{max_tokens:1500,temperature:0.6});
     S.solution=j;
   }catch(e){if(e&&e.cap){document.getElementById('solWrap').innerHTML=stopHtml();return;}markFB();S.solution=fbSolution();}
   renderSolution();
