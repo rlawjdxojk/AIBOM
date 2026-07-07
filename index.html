@@ -432,15 +432,20 @@ async function loadPersonas(){
   try{
     const j=await askJSON(`당신은 NVIDIA Nemotron-Personas-Korea에 기반한 아이봄 페르소나 엔진입니다. 아래 문제의 고객을 VPC 3역할로 1명씩 구성하세요: (1)사용자=문제를 직접 겪고 쓸 사람 (2)의사결정자=도입/구매 결정자 (3)비용지불자=실제 결제자. 각 인물은 실제 통계 분포에 맞는 구체적 한국인이어야 하며, 이름·나이·지역(시군구까지)·직업·가구가 서로 자연스럽게 맞물려야 합니다(예: 대학가 자취생이면 20대·해당 대학 인근·1인가구). 'feature'는 소비 성향과 이 문제와의 관련성을 한 문장으로 구체적으로. 뻔한 일반형 인물 금지. 반드시 JSON만:
 {"personas":[{"role":"사용자|의사결정자|비용지불자","id":"NPK-######","name":"","age":00,"sex":"남|여","region":"","edu":"","job":"","house":"","feature":"성향 한 줄"}]}
-문제: "${problemText()}" / 대상(누구): "${S.cells['누구']||'미정'}"${diversityBlock()}`,{max_tokens:1600});
+문제: "${problemText()}" / 대상(누구): "${S.cells['누구']||'미정'}"${diversityBlock()}`,{max_tokens:2000});
     S.persona=j.personas||[];
-  }catch(e){if(e&&e.cap){document.getElementById('personaWrap').innerHTML=stopHtml();return;}markFB();S.persona=fbPersonas();}
+    S._personaErr=null;
+  }catch(e){if(e&&e.cap){document.getElementById('personaWrap').innerHTML=stopHtml();return;}
+    console.error('persona load failed:',e);
+    S._personaErr=(e&&e.api)?('AI 오류: '+e.message):('생성/파싱 오류: '+((e&&e.message)||String(e)));
+    markFB();S.persona=fbPersonas();}
   if(!S.persona.length)S.persona=fbPersonas();
   S.persona.forEach((p,i)=>S.selected.add(i));
   renderPersonas();
 }
 function renderPersonas(){
-  document.getElementById('personaWrap').innerHTML='<div class="grid">'+S.persona.map((p,i)=>`
+  const errBanner=S._personaErr?`<div style="background:#3a1f1f;color:#ffb4a2;padding:10px 14px;border-radius:10px;margin-bottom:12px;font-size:13px;line-height:1.5">⚠ 페르소나 AI 생성 실패 → 고정 샘플로 대체됨.<br>원인: ${esc(S._personaErr)}</div>`:'';
+  document.getElementById('personaWrap').innerHTML=errBanner+'<div class="grid">'+S.persona.map((p,i)=>`
     <div class="pcard ${S.selected.has(i)?'sel':''}">
       <span class="rolebadge ${roleClass[p.role]||'role-u'}">${esc(p.role||'사용자')}</span>
       <div class="pid">${esc(p.id||'NPK-000000')}</div>
