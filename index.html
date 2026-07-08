@@ -29,14 +29,15 @@ button{font-family:var(--sans)}
 /* header — solid black bar */
 .top{position:sticky;top:0;z-index:20;background:var(--ink);border-bottom:3px solid var(--ink)}
 .top .wrap{display:flex;align-items:center;gap:14px;height:64px}
-.brand{display:flex;align-items:center;gap:11px;font-weight:900;font-size:20px;color:#fff;white-space:nowrap;flex-shrink:0}
+.brand{display:flex;align-items:center;gap:11px;font-weight:900;font-size:20px;color:#fff;white-space:nowrap;flex-shrink:0;cursor:pointer}
+.brand:hover{opacity:.82}
 .dot{width:27px;height:27px;border-radius:8px;background:var(--yellow);border:2px solid #fff;box-shadow:none;flex-shrink:0}
 .brand small{font-weight:600;color:#C9C4B0;font-size:12px}
 .ticker{margin-left:auto;font-family:var(--mono);font-size:12px;color:#EDE7D0;display:flex;align-items:center;gap:7px}
 .ticker b{color:var(--yellow)}
 .tk-name{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
 #usage{white-space:nowrap;margin-left:8px;color:var(--yellow)}
-.pulse{width:7px;height:7px;border-radius:50%;background:var(--green);animation:blink 1.8s infinite}
+.pulse{width:7px;height:7px;border-radius:50%;background:#4D9BF5;box-shadow:0 0 6px rgba(77,155,245,.8);animation:blink 1.8s infinite}
 @keyframes blink{0%,100%{opacity:1}50%{opacity:.25}}
 
 /* step progress — bordered blocks, filled by state */
@@ -208,7 +209,8 @@ button{font-family:var(--sans)}
 .msugg span{font-size:12px;color:var(--ink);background:#fff;border:2px solid var(--ink);border-radius:16px;padding:6px 11px;cursor:pointer;font-weight:600}
 .msugg span:hover{background:var(--surface2)}
 
-@media(max-width:640px){.flowgrid{grid-template-columns:repeat(2,1fr)}.ws{grid-template-columns:1fr}.steps .lbl span{display:none}.verdict{flex-direction:column;align-items:flex-start}.jactions{margin-left:0;width:100%}.top .wrap{gap:8px}.brand{font-size:16px}.brand small{display:none}.ticker{display:none}}
+.u-d{display:inline}
+@media(max-width:640px){.flowgrid{grid-template-columns:repeat(2,1fr)}.ws{grid-template-columns:1fr}.steps .lbl span{display:none}.verdict{flex-direction:column;align-items:flex-start}.jactions{margin-left:0;width:100%}.top .wrap{gap:8px}.brand{font-size:16px}.brand small{display:none}.tk-name{display:none}.u-d{display:none}.ticker{margin-left:0;gap:6px;font-size:11px}}
 @media(prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
 /* display face — major headings only (spend boldness here) */
 .brand,.hero h1,.shead h2,.flowgrid .f h4,.sol .band h3{font-family:var(--display);letter-spacing:-0.01em;font-weight:400}
@@ -238,8 +240,8 @@ button{font-family:var(--sans)}
 <div id="stopbar" style="display:none;position:fixed;top:0;left:0;right:0;z-index:100;background:#3a2320;color:#f6c4b8;border-bottom:1px solid #F2856B;padding:10px;text-align:center;font-size:13px;font-family:var(--mono)">⚠ 사용 한도 100% 도달 — 서비스가 자동 중지되었습니다.</div>
 
 <div class="top"><div class="wrap">
-  <div class="brand"><span class="dot"></span>아이봄<small>AIBOM</small></div>
-  <div class="ticker"><span class="pulse"></span><span class="tk-name">Nemotron-Personas-Korea · <b id="cnt">0</b>명</span><span id="usage">사용량 –</span></div>
+  <div class="brand" onclick="goHome()" role="button" tabindex="0" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();goHome();}" title="홈으로 이동" aria-label="아이봄 홈으로 이동"><span class="dot"></span>아이봄<small>AIBOM</small></div>
+  <div class="ticker"><span class="pulse"></span><span class="tk-name">Nemotron-Personas-Korea · <b id="cnt">0</b>명</span><span id="usage"><span class="u-d">사용량 <span class="u-pct">–</span> (</span><span class="u-frac">–</span><span class="u-d">)</span></span></div>
   <div class="auth" id="authbox"></div>
 </div></div>
 
@@ -378,6 +380,7 @@ checkAuth();
 loginToastFromURL();
 
 function start(){document.getElementById('steps').style.display='flex';document.getElementById('foot').style.display='block';renderWS();go(1);}
+function goHome(){document.getElementById('steps').style.display='none';document.getElementById('foot').style.display='none';go(0);}
 function go(n){
   document.querySelectorAll('.screen').forEach(s=>s.classList.remove('on'));
   document.getElementById(n===0?'hero':'s'+n).classList.add('on');
@@ -418,7 +421,8 @@ async function apiCall(messages,opts){
 async function refreshUsage(){try{const r=await fetch("/api/claude");if(r.ok){CAP=await r.json();renderUsage();if(CAP&&CAP.capped)showStopped();}}catch(e){}}
 function renderUsage(){if(!CAP||CAP.used==null||CAP.limit==null)return;const el=document.getElementById('usage');if(!el)return;
   const pct=Math.min(100,Math.round((CAP.used/CAP.limit)*100));
-  el.textContent=`사용량 ${pct}% (${CAP.used}/${CAP.limit})`;
+  const p=el.querySelector('.u-pct'),f=el.querySelector('.u-frac');
+  if(p)p.textContent=pct+'%'; if(f)f.textContent=CAP.used+'/'+CAP.limit;
   el.style.color=pct>=100?'#F2856B':pct>=80?'#F2C14E':'var(--sea)';}
 function showStopped(msg){STOPPED=true;const b=document.getElementById('stopbar');if(b){if(msg)b.textContent='⚠ '+msg;b.style.display='block';}}
 function stopHtml(){return '<div class="limbox" style="text-align:center">앱 호출 상한에 도달하여 자동 중지되었습니다.</div>';}
