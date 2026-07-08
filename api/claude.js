@@ -12,6 +12,19 @@ const KV_URL     = process.env.KV_REST_API_URL;
 const KV_TOKEN   = process.env.KV_REST_API_TOKEN;
 const KV         = !!(KV_URL && KV_TOKEN);
 
+// Supabase(Postgres)에 분석 데이터 적재 (REST, 실패해도 본 응답에 영향 없음)
+async function sbInsert(table, row){
+  const url = process.env.SUPABASE_URL, key = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!url || !key) return;
+  try {
+    await fetch(url.replace(/\/+$/,"") + "/rest/v1/" + table, {
+      method: "POST",
+      headers: { apikey: key, Authorization: "Bearer " + key, "content-type": "application/json", Prefer: "return=minimal" },
+      body: JSON.stringify(row)
+    });
+  } catch(_) {}
+}
+
 function ym(){const d=new Date();return d.getUTCFullYear()+"-"+String(d.getUTCMonth()+1).padStart(2,"0");}
 function ymd(){const d=new Date();return ym()+"-"+String(d.getUTCDate()).padStart(2,"0");}
 
@@ -100,6 +113,7 @@ module.exports = async (req, res) => {
       return res.status(ar.status).json({ apiError: true, lowCredit, used, limit: LIMIT, error: msg });
     }
     try { await bumpGlobal(); } catch(_){}
+    try { const us = (data && data.usage) || {}; await sbInsert("usage_events", { model: MODEL, input_tokens: us.input_tokens ?? null, output_tokens: us.output_tokens ?? null }); } catch(_){}
     let nowUsed = used + 1; try { nowUsed = await getUsed(); } catch(_){}
     return res.status(200).json({ content: data.content, usage: { used: nowUsed, limit: LIMIT, capped: nowUsed >= LIMIT } });
   } catch (e) {

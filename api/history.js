@@ -6,6 +6,19 @@ const KV_URL = process.env.KV_REST_API_URL;
 const KV_TOKEN = process.env.KV_REST_API_TOKEN;
 const KV = !!(KV_URL && KV_TOKEN);
 
+// Supabase(Postgres)에 완주 세션 적재 (REST, 실패해도 KV 저장/응답에 영향 없음)
+async function sbInsert(table, row){
+  const url = process.env.SUPABASE_URL, key = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!url || !key) return;
+  try {
+    await fetch(url.replace(/\/+$/,"") + "/rest/v1/" + table, {
+      method: "POST",
+      headers: { apikey: key, Authorization: "Bearer " + key, "content-type": "application/json", Prefer: "return=minimal" },
+      body: JSON.stringify(row)
+    });
+  } catch(_) {}
+}
+
 async function redis(cmd){
   const r = await fetch(KV_URL, { method:"POST",
     headers:{ Authorization:"Bearer "+KV_TOKEN, "content-type":"application/json" },
@@ -48,6 +61,27 @@ module.exports = async (req, res) => {
     list.unshift(item);
     list = list.slice(0, 50);
     await redis(["SET", key, JSON.stringify(list)]);
+
+    // Supabase 분석 테이블에 세션 1행 적재 (집계용 숫자 컬럼 + 원본 jsonb)
+    try {
+      const d = item.data || {};
+      const judges = d.judges || {};
+      const jv = Object.keys(judges).map(k => Number(judges[k] && judges[k].score)).filter(n => !isNaN(n));
+      const avg = jv.length ? Math.round((jv.reduce((a,b)=>a+b,0)/jv.length)*100)/100 : null;
+      const chats = d.chats || {};
+      const msgCount = Object.keys(chats).reduce((a,k)=>a + (Array.isArray(chats[k]) ? chats[k].length : 0), 0);
+      await sbInsert("validation_runs", {
+        user_provider: u.provider, user_id: u.id, user_name: u.name,
+        problem: item.problem,
+        persona_count: (d.personas || []).length,
+        message_count: msgCount,
+        avg_judge_score: avg,
+        region_count: ((d.solution || {}).regions || []).length,
+        cells: d.cells || {}, personas: d.personas || [], selected: d.selected || [],
+        chats: chats, judges: judges, solution: d.solution || null
+      });
+    } catch(_) {}
+
     return res.status(200).json({ ok: true, count: list.length });
   }
 
