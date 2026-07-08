@@ -29,7 +29,7 @@ button{font-family:var(--sans)}
 /* header — solid black bar */
 .top{position:sticky;top:0;z-index:20;background:var(--ink);border-bottom:3px solid var(--ink)}
 .top .wrap{display:flex;align-items:center;gap:14px;height:64px}
-.brand{display:flex;align-items:center;gap:11px;font-weight:900;font-size:20px;color:#fff;white-space:nowrap;flex-shrink:0;cursor:pointer}
+.brand{display:flex;align-items:center;gap:11px;font-weight:900;font-size:20px;color:#fff;white-space:nowrap;flex-shrink:0;cursor:pointer;-webkit-user-select:none;user-select:none}
 .brand:hover{opacity:.82}
 .dot{width:27px;height:27px;border-radius:8px;background:var(--yellow);border:2px solid #fff;box-shadow:none;flex-shrink:0}
 .brand small{font-weight:600;color:#C9C4B0;font-size:12px}
@@ -231,6 +231,23 @@ button{font-family:var(--sans)}
 .hitem .hp{font-size:14px;font-weight:800;margin:5px 0 0;color:var(--ink);line-height:1.4}
 .hitem .hs{font-size:12.5px;color:#3C3A30;margin:7px 0 0;line-height:1.5}
 .hempty{text-align:center;color:var(--muted);padding:40px 10px;font-weight:600;line-height:1.7}
+.hitem.hclick{cursor:pointer;transition:.12s}
+.hitem.hclick:hover{transform:translate(-1px,-1px);box-shadow:4px 4px 0 var(--ink)}
+.hmore{font-size:11.5px;color:#6D4FB0;font-weight:800;margin-top:8px}
+.hsec{font-family:var(--mono);font-size:11px;font-weight:800;letter-spacing:.06em;background:var(--yellow);border:2px solid var(--ink);border-radius:14px;padding:4px 11px;display:inline-block;margin:20px 0 10px;box-shadow:2px 2px 0 var(--ink)}
+.hgrid{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.hcell{background:#fff;border:2px solid var(--ink);border-radius:10px;padding:9px 11px;font-size:12.5px;line-height:1.5}
+.hcell b{display:block;font-family:var(--mono);font-size:11px;color:var(--muted);margin-bottom:3px}
+.hcard{background:#fff;border:2px solid var(--ink);border-radius:12px;padding:12px 14px;margin-bottom:10px;box-shadow:2px 2px 0 var(--ink)}
+.hp2{font-size:13.5px;font-weight:800;color:var(--ink)}
+.hsel{font-family:var(--mono);font-size:10px;background:var(--green);border:1.5px solid var(--ink);border-radius:10px;padding:1px 7px;margin-left:4px}
+.hmeta{font-size:12.5px;color:#3C3A30;margin-top:4px;line-height:1.55}
+.hq{font-size:13px;font-weight:700;color:var(--ink);margin-top:6px}
+.hchat{margin-top:9px;display:flex;flex-direction:column;gap:6px}
+.hmsg{font-size:12.5px;padding:8px 11px;border:2px solid var(--ink);border-radius:11px;max-width:88%;line-height:1.5}
+.hmsg.ai{background:#fff;align-self:flex-start}
+.hmsg.me{background:var(--blue);align-self:flex-end}
+.hnochat{font-size:12px;color:var(--dim);margin-top:7px}
 .lb-m{display:none}
 @media(max-width:640px){.auth{margin-left:auto;gap:6px}.auth .uname{display:none}.loginbtn{padding:6px 10px;font-size:11.5px}.lb-d{display:none}.lb-m{display:inline}}
 :focus-visible{outline:3px solid var(--ink);outline-offset:2px}
@@ -364,7 +381,7 @@ const CELLS=[
   {k:'누구',hint:'문제를 겪는 사람'},{k:'언제',hint:'어떤 상황·시점'},{k:'어디서',hint:'장소·맥락'},
   {k:'증상',hint:'겉으로 드러난 불편'},{k:'원인',hint:'근본 원인'},{k:'시도',hint:'지금까지의 해결 시도'}
 ];
-const S={cells:{},skips:{},persona:[],selected:new Set(),judgeFb:{},solution:null,chat:null};
+const S={cells:{},skips:{},persona:[],selected:new Set(),judgeFb:{},solution:null,chat:null,chatLogs:{}};
 CELLS.forEach(c=>{S.cells[c.k]='';S.skips[c.k]=false;});
 const JUDGES=[
   {role:'벤처투자 심사역',emoji:'💰',angle:'시장성·수요'},
@@ -391,7 +408,7 @@ function go(n){
   if(n===4)loadSolution();
 }
 function restart(){S.cells={};S.skips={};CELLS.forEach(c=>{S.cells[c.k]='';S.skips[c.k]=false;});
-  S.persona=[];S.selected=new Set();S.judgeFb={};S.solution=null;
+  S.persona=[];S.selected=new Set();S.judgeFb={};S.solution=null;S.chatLogs={};
   document.getElementById('freeText').value='';document.getElementById('ainote').className='ainote';
   document.getElementById('personaWrap').innerHTML=load('타깃을 찾는 중…');
   document.getElementById('judgeWrap').innerHTML='';document.getElementById('verdict').className='verdict';
@@ -554,7 +571,9 @@ function openChat(profile){
   document.getElementById('modal').classList.add('on');
   setTimeout(()=>document.getElementById('mInput').focus(),100);
 }
-function closeChat(){document.getElementById('modal').classList.remove('on');S.chat=null;}
+function closeChat(){if(S.chat&&S.chat.logKey)S.chatLogs[S.chat.logKey]=S.chat.history.slice();document.getElementById('modal').classList.remove('on');S.chat=null;}
+function saveChatLog(){if(S.chat&&S.chat.logKey)S.chatLogs[S.chat.logKey]=S.chat.history.slice();}
+function restoreChatLog(key){const log=S.chatLogs[key];if(log&&log.length){log.forEach(m=>addChat(m.role==='user'?'me':'ai',esc(m.content)));S.chat.history=log.slice();}}
 function addChat(who,html){
   const log=document.getElementById('mLog');const d=document.createElement('div');d.className='msg '+who;
   const init=(who==='ai'&&S.chat)?esc(S.chat.profile.initial):'나';
@@ -580,6 +599,7 @@ async function sendChat(){
     const fb=pool[idx];t.querySelector('.bub').innerHTML=esc(fb);S.chat.history.push({role:'assistant',content:fb});
   }
   document.getElementById('mSend').disabled=false;document.getElementById('mInput').focus();
+  saveChatLog();
 }
 function openPersonaChat(i){
   const p=S.persona[i];
@@ -591,6 +611,7 @@ function openPersonaChat(i){
     suggest:['이 문제, 실제로 겪으세요?','돈 내고 쓸 의향 있으세요?','지금은 어떻게 해결하세요?','뭐가 제일 아쉬워요?'],
     fallback:['음, 겪긴 하는데 그게 돈 낼 만큼 큰 불편인지는 잘 모르겠어요.','솔직히 지금 방식도 그럭저럭이라서요. 확 끌리진 않네요.','편하면 써볼 의향은 있어요. 근데 가격이랑 후기부터 볼 것 같아요.','제 주변엔 이거 필요해할 사람 몇 있을 것 같긴 해요.']
   });
+  S.chat.logKey='p'+i;restoreChatLog('p'+i);
 }
 
 function loadJudgesInit(){
@@ -642,6 +663,7 @@ function openJudgeChat(i){
     suggest:['시장이 충분히 크다고 봅니다','경쟁사와 이렇게 다릅니다','이렇게 수익을 냅니다','어떻게 검증하면 될까요?'],
     fallback:['숫자가 없으면 설득이 어렵습니다. 근거를 보여주세요.','경쟁 대비 방어 요소가 뭔지 다시 정리해보세요.','타깃을 더 좁히면 검증 속도가 빨라집니다.','첫 지표와 실행 순서를 명확히 하세요.']
   });
+  S.chat.logKey='j'+i;restoreChatLog('j'+i);
 }
 
 async function loadSolution(){
@@ -721,26 +743,83 @@ async function saveRun(){
   try{
     const payload={problem:problemText(),data:{
       cells:S.cells,
-      personas:[...S.selected].map(i=>S.persona[i]).filter(Boolean),
+      personas:S.persona,
+      selected:[...S.selected],
+      chats:S.chatLogs,
+      judges:S.judgeFb,
       solution:S.solution
     }};
     const r=await fetch('/api/history',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
     if(r.ok)toast('이 결과가 내 기록에 저장되었습니다.');
   }catch(_){}
 }
+let HIST=[];
 async function openHistory(){
   const m=document.getElementById('histmodal'),b=document.getElementById('histbody');
   b.innerHTML='<div class="loadwrap"><div class="spin"></div></div>';m.classList.add('on');
   try{
-    const r=await fetch('/api/history');const j=await r.json();const list=(j&&j.history)||[];
-    if(!list.length){b.innerHTML='<div class="hempty">아직 저장된 기록이 없어요.<br>문제를 검증하고 솔루션 단계까지 진행하면 자동으로 저장됩니다.</div>';return;}
-    b.innerHTML='<div class="hlist">'+list.map(h=>{
+    const r=await fetch('/api/history');const j=await r.json();HIST=(j&&j.history)||[];
+    if(!HIST.length){b.innerHTML='<div class="hempty">아직 저장된 기록이 없어요.<br>문제를 검증하고 솔루션 단계까지 진행하면 자동으로 저장됩니다.</div>';return;}
+    b.innerHTML='<div class="hlist">'+HIST.map((h,i)=>{
       const d=new Date(h.t);const sol=h.data&&h.data.solution;const concl=(sol&&(sol.conclusion||sol.target))||'';
-      return '<div class="hitem"><div class="ht">'+d.toLocaleString('ko-KR')+'</div>'+
+      return '<div class="hitem hclick" onclick="showHistoryDetail('+i+')"><div class="ht">'+d.toLocaleString('ko-KR')+'</div>'+
         '<div class="hp">'+esc((h.problem||'(내용 없음)')).slice(0,100)+'</div>'+
-        (concl?'<div class="hs">✦ '+esc(concl).slice(0,140)+'</div>':'')+'</div>';
+        (concl?'<div class="hs">✦ '+esc(concl).slice(0,140)+'</div>':'')+
+        '<div class="hmore">눌러서 전체 내역 보기 →</div></div>';
     }).join('')+'</div>';
   }catch(e){b.innerHTML='<div class="hempty">기록을 불러오지 못했습니다.</div>';}
+}
+function showHistoryDetail(i){
+  const h=HIST[i];if(!h){openHistory();return;}
+  const d=h.data||{};const b=document.getElementById('histbody');
+  const P=x=>esc(x==null?'':String(x));
+  let html='<button class="loginbtn ghost" style="margin-bottom:14px" onclick="openHistory()">← 목록으로</button>';
+  html+='<div class="hitem"><div class="ht">'+new Date(h.t).toLocaleString('ko-KR')+'</div><div class="hp">'+P(h.problem)+'</div></div>';
+  // 1) 문제 발견
+  const cells=d.cells||{};const ck=['누구','언제','어디서','증상','원인','시도'];
+  if(ck.some(k=>cells[k])){
+    html+='<div class="hsec">STEP 01 · 문제 발견</div><div class="hgrid">';
+    ck.forEach(k=>{if(cells[k])html+='<div class="hcell"><b>'+k+'</b>'+P(cells[k])+'</div>';});
+    html+='</div>';
+  }
+  // 2) 페르소나 + 대화
+  const ps=d.personas||[];const sel=d.selected||ps.map((_,x)=>x);const chats=d.chats||{};
+  if(ps.length){
+    html+='<div class="hsec">STEP 02 · 페르소나 대화</div>';
+    ps.forEach((p,pi)=>{
+      const on=sel.indexOf(pi)>=0;
+      html+='<div class="hcard"><div class="hp2">'+P(p.name)+' · '+P(p.role)+(on?' <span class="hsel">검증 대상</span>':'')+'</div>'+
+        '<div class="hmeta">'+P((p.age?p.age+'세 · ':'')+(p.job||'')+(p.region?' · '+p.region:''))+'</div>';
+      const log=chats['p'+pi]||[];
+      if(log.length)html+='<div class="hchat">'+log.map(msg=>'<div class="hmsg '+(msg.role==='user'?'me':'ai')+'">'+P(msg.content)+'</div>').join('')+'</div>';
+      else html+='<div class="hnochat">대화 내역 없음</div>';
+      html+='</div>';
+    });
+  }
+  // 3) 심사위원
+  const jf=d.judges||{};const jkeys=Object.keys(jf);
+  if(jkeys.length){
+    html+='<div class="hsec">STEP 03 · AI 심사위원</div>';
+    jkeys.forEach(k=>{const r=jf[k]||{};
+      html+='<div class="hcard"><div class="hp2">심사위원 '+(Number(k)+1)+' · 점수 '+P(r.score)+'/5</div>'+
+        (r.q?'<div class="hq">“'+P(r.q)+'”</div>':'')+(r.fb?'<div class="hmeta">'+P(r.fb)+'</div>':'');
+      const log=chats['j'+k]||[];
+      if(log.length)html+='<div class="hchat">'+log.map(msg=>'<div class="hmsg '+(msg.role==='user'?'me':'ai')+'">'+P(msg.content)+'</div>').join('')+'</div>';
+      html+='</div>';
+    });
+  }
+  // 4) 솔루션
+  const s=d.solution;
+  if(s){
+    html+='<div class="hsec">STEP 04 · 솔루션</div><div class="hcard">';
+    if((s.regions||[]).length){html+='<div class="hp2">먼저 검증할 지역</div>';s.regions.forEach(r=>html+='<div class="hmeta">• <b>'+P(r.name)+'</b> — '+P(r.reason)+'</div>');}
+    if(s.target)html+='<div class="hp2" style="margin-top:8px">핵심 타깃</div><div class="hmeta">'+P(s.target)+'</div>';
+    if((s.improve||[]).length){html+='<div class="hp2" style="margin-top:8px">개선 방향</div>';s.improve.forEach(x=>html+='<div class="hmeta">→ '+P(x)+'</div>');}
+    if((s.actions||[]).length){html+='<div class="hp2" style="margin-top:8px">다음 액션</div>';s.actions.forEach((x,xi)=>html+='<div class="hmeta">'+(xi+1)+'. '+P(x)+'</div>');}
+    if(s.conclusion)html+='<div class="hs" style="margin-top:10px">✦ '+P(s.conclusion)+'</div>';
+    html+='</div>';
+  }
+  b.innerHTML=html;b.scrollTop=0;
 }
 function closeHist(){document.getElementById('histmodal').classList.remove('on');}
 </script>
